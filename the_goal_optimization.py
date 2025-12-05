@@ -1,195 +1,160 @@
 """
-The Goal - Product Mix Optimization Exercise
-Based on Theory of Constraints concepts from Eliyahu Goldratt's "The Goal"
+The Goal - Production Scheduling Optimization Exercise
+Based on Eliyahu Goldratt's Theory of Constraints
 
 Scenario:
-You are Alex Rogo, plant manager at UniCo Manufacturing. Your plant produces three 
-products (Model X, Model Y, and Model Z). Each product must go through four work 
-centers: Machining, Heat Treatment, Assembly, and Quality Control.
+Alex Rogo's plant produces two product families (similar to the book's scenario):
+- Product A: Higher profit margin ($90/unit), requires more processing time
+- Product B: Lower profit margin ($60/unit), requires less processing time
 
-The plant operates 160 hours per month. Your goal is to maximize throughput 
-(contribution margin) while respecting the capacity constraints at each work center.
+The plant has three work centers that mirror the book's concepts:
+1. Machining Center (like the NCX-10 machines)
+2. Heat Treatment (the bottleneck - like Herbie on the hike)
+3. Assembly (post-bottleneck operations)
 
-One of these work centers is likely a bottleneck - just like the NCX-10 and 
-heat treatment ovens in the book!
+Each product requires different amounts of time at each work center.
+Your goal: Maximize throughput (revenue) while respecting capacity constraints.
 """
 
 from pulp import *
+import pandas as pd
 
-def solve_product_mix():
-    # =============================================================================
-    # PROBLEM DATA
-    # =============================================================================
+def create_goal_optimization_model(
+    heat_treatment_capacity=160,  # Hours per week - THE BOTTLENECK
+    machining_capacity=200,       # Hours per week
+    assembly_capacity=180,        # Hours per week
+    demand_a=50,                  # Maximum demand for Product A
+    demand_b=80,                  # Maximum demand for Product B
+    profit_a=90,                  # Profit per unit of Product A
+    profit_b=60                   # Profit per unit of Product B
+):
+    """
+    Create and solve the production optimization model.
     
-    # Products and their contribution margins (selling price - materials cost)
-    products = ['Model_X', 'Model_Y', 'Model_Z']
-    contribution_margin = {
-        'Model_X': 90,   # $ per unit
-        'Model_Y': 100,  # $ per unit  
-        'Model_Z': 70    # $ per unit
-    }
+    Key insight from The Goal: The bottleneck (Heat Treatment) determines
+    the throughput of the entire system!
+    """
     
-    # Work centers and their available capacity (hours per month)
-    work_centers = ['Machining', 'Heat_Treatment', 'Assembly', 'Quality_Control']
-    capacity = {
-        'Machining': 160,
-        'Heat_Treatment': 140,  # This might be our bottleneck!
-        'Assembly': 160,
-        'Quality_Control': 160
-    }
+    # Create the model
+    model = LpProblem("The_Goal_Production_Scheduling", LpMaximize)
     
-    # Processing time required at each work center (hours per unit)
-    processing_time = {
-        ('Model_X', 'Machining'): 2.0,
-        ('Model_X', 'Heat_Treatment'): 3.0,
-        ('Model_X', 'Assembly'): 1.5,
-        ('Model_X', 'Quality_Control'): 0.5,
-        
-        ('Model_Y', 'Machining'): 1.5,
-        ('Model_Y', 'Heat_Treatment'): 2.5,
-        ('Model_Y', 'Assembly'): 2.0,
-        ('Model_Y', 'Quality_Control'): 1.0,
-        
-        ('Model_Z', 'Machining'): 1.0,
-        ('Model_Z', 'Heat_Treatment'): 2.0,
-        ('Model_Z', 'Assembly'): 1.0,
-        ('Model_Z', 'Quality_Control'): 0.5,
-    }
+    # Decision variables
+    product_a = LpVariable("Product_A", lowBound=0, cat='Continuous')
+    product_b = LpVariable("Product_B", lowBound=0, cat='Continuous')
     
-    # Market demand constraints (maximum units we can sell per month)
-    max_demand = {
-        'Model_X': 50,
-        'Model_Y': 60,
-        'Model_Z': 80
-    }
+    # Objective function: Maximize throughput (profit)
+    # Remember Goldratt's definition: Throughput = rate of generating money through sales
+    model += profit_a * product_a + profit_b * product_b, "Total_Throughput"
     
-    # =============================================================================
-    # BUILD THE OPTIMIZATION MODEL
-    # =============================================================================
+    # Processing times (hours per unit)
+    machining_time = {"A": 2.5, "B": 1.5}
+    heat_treatment_time = {"A": 4.0, "B": 2.0}  # Bottleneck!
+    assembly_time = {"A": 2.0, "B": 1.5}
     
-    # Create the optimization problem
-    prob = LpProblem("UniCo_Product_Mix", LpMaximize)
+    # Constraints
+    # 1. Machining capacity constraint
+    model += (machining_time["A"] * product_a + 
+              machining_time["B"] * product_b <= machining_capacity), "Machining_Capacity"
     
-    # Decision variables: how many units of each product to produce
-    production = LpVariable.dicts("Production", products, lowBound=0, cat='Continuous')
+    # 2. Heat Treatment capacity constraint (THE BOTTLENECK)
+    # As Jonah would say: "An hour lost at the bottleneck is an hour lost for the entire system"
+    model += (heat_treatment_time["A"] * product_a + 
+              heat_treatment_time["B"] * product_b <= heat_treatment_capacity), "Heat_Treatment_Capacity_BOTTLENECK"
     
-    # Objective function: Maximize total contribution margin (throughput)
-    prob += lpSum([contribution_margin[p] * production[p] for p in products]), "Total_Throughput"
+    # 3. Assembly capacity constraint
+    model += (assembly_time["A"] * product_a + 
+              assembly_time["B"] * product_b <= assembly_capacity), "Assembly_Capacity"
     
-    # Capacity constraints: Don't exceed available hours at each work center
-    for wc in work_centers:
-        prob += (
-            lpSum([processing_time[(p, wc)] * production[p] for p in products]) <= capacity[wc],
-            f"Capacity_{wc}"
-        )
+    # 4. Demand constraints
+    model += product_a <= demand_a, "Demand_Limit_A"
+    model += product_b <= demand_b, "Demand_Limit_B"
     
-    # Demand constraints: Don't produce more than we can sell
-    for p in products:
-        prob += production[p] <= max_demand[p], f"Demand_{p}"
+    # Solve the model
+    model.solve(PULP_CBC_CMD(msg=0))
     
-    # =============================================================================
-    # SOLVE THE MODEL
-    # =============================================================================
-    
-    # Solve using the default solver
-    prob.solve(PULP_CBC_CMD(msg=0))
-    
-    # =============================================================================
-    # ANALYZE AND DISPLAY RESULTS
-    # =============================================================================
-    
+    # Prepare results
     results = {
-        'status': LpStatus[prob.status],
-        'optimal_throughput': value(prob.objective),
-        'production_plan': {},
-        'work_center_utilization': {},
-        'bottleneck_analysis': {},
-        'shadow_prices': {}
+        "status": LpStatus[model.status],
+        "product_a": value(product_a),
+        "product_b": value(product_b),
+        "total_throughput": value(model.objective),
+        "machining_used": machining_time["A"] * value(product_a) + machining_time["B"] * value(product_b),
+        "machining_capacity": machining_capacity,
+        "heat_treatment_used": heat_treatment_time["A"] * value(product_a) + heat_treatment_time["B"] * value(product_b),
+        "heat_treatment_capacity": heat_treatment_capacity,
+        "assembly_used": assembly_time["A"] * value(product_a) + assembly_time["B"] * value(product_b),
+        "assembly_capacity": assembly_capacity,
     }
     
-    # Production quantities
-    for p in products:
-        results['production_plan'][p] = production[p].varValue
+    # Calculate utilization percentages
+    results["machining_utilization"] = (results["machining_used"] / machining_capacity) * 100
+    results["heat_treatment_utilization"] = (results["heat_treatment_used"] / heat_treatment_capacity) * 100
+    results["assembly_utilization"] = (results["assembly_used"] / assembly_capacity) * 100
     
-    # Calculate utilization at each work center
-    for wc in work_centers:
-        hours_used = sum([processing_time[(p, wc)] * production[p].varValue for p in products])
-        utilization_pct = (hours_used / capacity[wc]) * 100
-        results['work_center_utilization'][wc] = {
-            'hours_used': hours_used,
-            'capacity': capacity[wc],
-            'utilization_pct': utilization_pct,
-            'slack_hours': capacity[wc] - hours_used
-        }
+    # Identify the binding constraint (actual bottleneck)
+    results["bottleneck"] = "Heat Treatment" if results["heat_treatment_utilization"] >= 99.9 else \
+                           "Machining" if results["machining_utilization"] >= 99.9 else \
+                           "Assembly" if results["assembly_utilization"] >= 99.9 else \
+                           "Demand"
     
-    # Identify bottleneck(s) - work centers at or near 100% utilization
-    for wc in work_centers:
-        if results['work_center_utilization'][wc]['utilization_pct'] >= 99:
-            results['bottleneck_analysis'][wc] = 'BOTTLENECK'
-        elif results['work_center_utilization'][wc]['utilization_pct'] >= 90:
-            results['bottleneck_analysis'][wc] = 'Near Capacity'
-        else:
-            results['bottleneck_analysis'][wc] = 'Has Slack'
+    # Calculate constraint shadow prices (dual values)
+    constraints_data = []
+    for name, constraint in model.constraints.items():
+        constraints_data.append({
+            "Constraint": name,
+            "Shadow_Price": constraint.pi,
+            "Slack": constraint.slack
+        })
+    results["constraints_df"] = pd.DataFrame(constraints_data)
     
-    # Extract shadow prices (dual values) for capacity constraints
-    for name, constraint in prob.constraints.items():
-        if 'Capacity' in name:
-            results['shadow_prices'][name] = constraint.pi
-    
-    return results, prob
+    return results, model
 
 
-def print_results(results):
-    """Print formatted results"""
-    print("\n" + "="*70)
-    print("UNICO MANUFACTURING - OPTIMAL PRODUCTION PLAN")
-    print("="*70)
+def format_results(results):
+    """Format results for display."""
+    output = []
+    output.append("="*60)
+    output.append("THE GOAL - PRODUCTION OPTIMIZATION RESULTS")
+    output.append("="*60)
+    output.append(f"\nOptimization Status: {results['status']}")
+    output.append(f"\nOptimal Production Plan:")
+    output.append(f"  Product A: {results['product_a']:.2f} units")
+    output.append(f"  Product B: {results['product_b']:.2f} units")
+    output.append(f"\nMaximum Throughput (Profit): ${results['total_throughput']:,.2f}")
     
-    print(f"\nSolution Status: {results['status']}")
-    print(f"Maximum Monthly Throughput: ${results['optimal_throughput']:,.2f}")
+    output.append(f"\n{'─'*60}")
+    output.append("RESOURCE UTILIZATION (Theory of Constraints Analysis)")
+    output.append(f"{'─'*60}")
     
-    print("\n" + "-"*70)
-    print("PRODUCTION PLAN")
-    print("-"*70)
-    for product, quantity in results['production_plan'].items():
-        print(f"{product:12s}: {quantity:6.2f} units")
+    output.append(f"\nMachining Center:")
+    output.append(f"  Used: {results['machining_used']:.2f} / {results['machining_capacity']:.2f} hours")
+    output.append(f"  Utilization: {results['machining_utilization']:.1f}%")
     
-    print("\n" + "-"*70)
-    print("WORK CENTER UTILIZATION")
-    print("-"*70)
-    print(f"{'Work Center':<20} {'Used':<10} {'Capacity':<10} {'Utilization':<12} {'Slack'}")
-    print("-"*70)
-    for wc, util in results['work_center_utilization'].items():
-        status = results['bottleneck_analysis'].get(wc, '')
-        marker = " ← BOTTLENECK!" if status == "BOTTLENECK" else ""
-        print(f"{wc:<20} {util['hours_used']:>6.2f} hrs {util['capacity']:>6.0f} hrs "
-              f"{util['utilization_pct']:>9.1f}%   {util['slack_hours']:>6.2f} hrs{marker}")
+    output.append(f"\nHeat Treatment (Expected Bottleneck):")
+    output.append(f"  Used: {results['heat_treatment_used']:.2f} / {results['heat_treatment_capacity']:.2f} hours")
+    output.append(f"  Utilization: {results['heat_treatment_utilization']:.1f}%")
     
-    print("\n" + "-"*70)
-    print("SHADOW PRICES (Value of Additional Capacity)")
-    print("-"*70)
-    print("How much would throughput increase with one more hour of capacity?")
-    for constraint, shadow_price in results['shadow_prices'].items():
-        wc_name = constraint.replace('Capacity_', '')
-        if shadow_price is not None and shadow_price > 0:
-            print(f"{wc_name:<20}: ${shadow_price:.2f} per additional hour")
+    output.append(f"\nAssembly Center:")
+    output.append(f"  Used: {results['assembly_used']:.2f} / {results['assembly_capacity']:.2f} hours")
+    output.append(f"  Utilization: {results['assembly_utilization']:.1f}%")
     
-    print("\n" + "="*70)
-    print("INSIGHTS FROM THE GOAL")
-    print("="*70)
-    print("""
-Remember from The Goal:
-1. Identify the bottleneck(s) - constraints that limit throughput
-2. Exploit the bottleneck - use every minute productively
-3. Subordinate everything else to the bottleneck decision
-4. Elevate the bottleneck - increase its capacity if justified
-5. Repeat - when you break one bottleneck, find the next one!
-
-The shadow prices tell you how valuable additional capacity would be at each
-work center. Focus improvement efforts where they create the most value!
-    """)
+    output.append(f"\n{'─'*60}")
+    output.append(f"ACTUAL BOTTLENECK: {results['bottleneck']}")
+    output.append(f"{'─'*60}")
+    
+    output.append("\nKey Insight from The Goal:")
+    if results['bottleneck'] == "Heat Treatment":
+        output.append("  'An hour lost at the bottleneck is an hour lost for the entire system.'")
+        output.append(f"  Every additional hour at Heat Treatment is worth $X to the system.")
+    
+    output.append("\n" + "="*60)
+    
+    return "\n".join(output)
 
 
 if __name__ == "__main__":
-    results, prob = solve_product_mix()
-    print_results(results)
+    # Solve with default parameters
+    results, model = create_goal_optimization_model()
+    print(format_results(results))
+    print("\nConstraint Analysis:")
+    print(results["constraints_df"].to_string(index=False))
