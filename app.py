@@ -13,7 +13,7 @@ import pandas as pd
 # Page configuration
 ui.page_opts(
     title="The Goal - Production Optimization",
-    fillable=True
+    fillable=False
 )
 
 # Header
